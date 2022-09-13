@@ -2,6 +2,7 @@ import { APIGatewayProxyHandler } from "aws-lambda";
 import { document } from "../utils/dynamoDBClient";
 import { compile } from "handlebars";
 import chromium from "chrome-aws-lambda";
+import { S3 } from "aws-sdk";
 
 import { join } from "path";
 import { readFileSync } from "fs";
@@ -39,16 +40,20 @@ export const handler: APIGatewayProxyHandler = async (event) => {
         }
     }).promise();
 
-    await document.put({
-        TableName: "users_certificate",
-        Item: {
-            id,
-            name,
-            grade,
-            created_at: new Date().getTime(),
-        },
-    })
-        .promise();
+    const userAlreadyExists = response.Items[0];
+
+    if (!userAlreadyExists) {
+        await document.put({
+            TableName: "users_certificate",
+            Item: {
+                id,
+                name,
+                grade,
+                created_at: new Date().getTime(),
+            },
+        })
+            .promise();
+    }
 
     const medalPath = join(process.cwd(), "src", "templates", "selo.png");
     const medal = readFileSync(medalPath, "base64");
@@ -70,7 +75,7 @@ export const handler: APIGatewayProxyHandler = async (event) => {
         userDataDir: '/dev/null',
     });
 
-    const page =  await browser.newPage();
+    const page = await browser.newPage();
     await page.setContent(content);
 
     const pdf = await page.pdf({
@@ -83,8 +88,22 @@ export const handler: APIGatewayProxyHandler = async (event) => {
 
     await browser.close();
 
+    const s3 = new S3();
+
+    await s3
+        .putObject({
+            Bucket: "certificatenodejs2022",
+            Key: `${id}.pdf`,
+            ACL: "public-read",
+            Body: pdf,
+            ContentType: "application/pdf",
+        }).promise();
+
     return {
         statusCode: 201,
-        body: JSON.stringify(response.Items[0]),
+        body: JSON.stringify({
+            message: "Certificado criado com sucesso!",
+            url: `https://certificatenodejs2022.s3.amazonaws.com/${id}.pdf`,
+        }),
     };
 };
